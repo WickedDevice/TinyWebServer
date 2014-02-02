@@ -11,6 +11,8 @@
 #define __WEB_SERVER_H__
 
 #include <Print.h>
+#include <Adafruit_CC3000.h>
+#include <Adafruit_CC3000_Server.h>
 
 class SdFile;
 class TinyWebServer;
@@ -36,7 +38,7 @@ namespace TinyWebPutHandler {
 class TinyWebServer : public Print {
 public:
   // An HTTP path handler. The handler function takes the path it
-  // registered for as argument, and the Client object to handle the
+  // registered for as argument, and the Adafruit_CC3000_Client object to handle the
   // response.
   //
   // The function should return true if it finished handling the request
@@ -86,14 +88,14 @@ public:
   void send_error_code(int code) {
     send_error_code(client_, code);
   }
-  static void send_error_code(Client& client, int code);
+  static void send_error_code(Adafruit_CC3000_ClientRef client, int code);
 
   void send_content_type(MimeType mime_type);
   void send_content_type(const char* content_type);
 
   // Call this method to indicate the end of the headers.
   inline void end_headers() { client_.println(); }
-  static inline void end_headers(Client& client) { client.println(); }
+  static inline void end_headers(Adafruit_CC3000_ClientRef client) { client.println(); }
 
   // void send_error_code(MimeType mime_type, int code);
   // void send_error_code(const char* content_type, int code);
@@ -101,7 +103,7 @@ public:
   const char* get_path();
   const HttpRequestType get_type();
   const char* get_header_value(const char* header);
-  EthernetClient& get_client() { return client_; }
+  Adafruit_CC3000_ClientRef get_client() { return client_; }
 
   // Processes the HTTP headers and assigns values to the requested
   // ones in headers_. Returns true when successful, false in case of
@@ -135,7 +137,7 @@ public:
   //
   // This is mainly an optimization to reuse the internal static
   // buffer used by this class, which saves us some RAM.
-  void send_file(SdFile& file);
+  void send_file(const char * filename);
 
   // These methods write directly in the response stream of the
   // connected client
@@ -150,7 +152,7 @@ public:
 
   // Reads a character from the request's input stream. Returns true
   // if the character could be read, false otherwise.
-  virtual boolean read_next_char(Client& client, uint8_t* ch);
+  virtual boolean read_next_char(Adafruit_CC3000_ClientRef client, uint8_t* ch);
 
  protected:
   // Returns the field number `which' from buffer. Fields are
@@ -171,11 +173,11 @@ private:
   HeaderValue* headers_;
 
   // The TCP/IP server we use.
-  EthernetServer server_;
+  Adafruit_CC3000_Server server_;
 
   char* path_;
   HttpRequestType request_type_;
-  EthernetClient client_;
+  Adafruit_CC3000_ClientRef client_;
 
   // Reads a line from the HTTP request sent by an HTTP client. The
   // line is put in `buffer' and up to `size' characters are written

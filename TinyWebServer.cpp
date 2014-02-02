@@ -30,19 +30,18 @@ extern "C" {
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <avr/pgmspace.h>
 }
 
-#include <Ethernet.h>
-#include <Flash.h>
-#include <SD.h>
+#include <Adafruit_CC3000.h>
+#include <Adafruit_CC3000_Server.h>
+
+#include <SdFat.h>
+extern SdFat sd;
 
 #include "TinyWebServer.h"
 
-// Temporary buffer.
-static char buffer[160];
-
-FLASH_STRING(mime_types,
-  "HTM*text/html|"
+char mime_types[] PROGMEM =   "HTM*text/html|"
   "TXT*text/plain|"
   "CSS*text/css|"
   "XML*text/xml|"
@@ -53,14 +52,18 @@ FLASH_STRING(mime_types,
   "PNG*image/png|"
   "ICO*image/vnd.microsoft.icon|"
 
-  "MP3*audio/mpeg|"
-);
+  "MP3*audio/mpeg|";
+
+char content_type_msg[] PROGMEM = "Content-Type: ";
+
+// Temporary buffer.
+static char buffer[160];
 
 void *malloc_check(size_t size) {
   void* r = malloc(size);
 #if DEBUG
   if (!r) {
-    Serial << F("TWS:No space for malloc: " ); Serial.println(size, DEC);
+    Serial.print(F("TWS:No space for malloc: " )); Serial.println(size, DEC);
   }
 #endif
   return r;
@@ -73,10 +76,11 @@ TinyWebServer::TinyWebServer(PathHandler handlers[],
 			     const char** headers,
                              const int port)
   : handlers_(handlers),
-    server_(EthernetServer(port)),
+    server_(Adafruit_CC3000_Server(port)),
     path_(NULL),
     request_type_(UNKNOWN_REQUEST),
-    client_(EthernetClient(255)) {
+    client_(NULL){
+  
   if (headers) {
     int size = 0;
     for (int i = 0; headers[i]; i++) {
@@ -232,13 +236,15 @@ void TinyWebServer::process() {
     return;
   }
 #if DEBUG
-  Serial << F("TWS:New request: ");
+  Serial.print(F("TWS:New request: "));
   Serial.println(buffer);
 #endif
   if (!is_complete) {
     // The requested path is too long.
     send_error_code(414);
-    client_.stop();
+    //client_.stop();
+    delay(1000);   
+    client_.close();
     return;
   }
 
@@ -257,7 +263,9 @@ void TinyWebServer::process() {
   if (!process_headers()) {
     // Malformed header line.
     send_error_code(417);
-    client_.stop();
+    //client_.stop();
+    delay(1000);    
+    client_.close();
   }
   // Header processing finished. Identify the handler to call.
 
@@ -285,7 +293,9 @@ void TinyWebServer::process() {
     // client_->println();
   }
   if (should_close) {
-    client_.stop();
+    //client_.stop();
+    delay(1000);   
+    client_.close();
   }
 
   free(path_);
@@ -326,23 +336,23 @@ boolean TinyWebServer::assign_header_value(const char* header, char* value) {
   return found;
 }
 
-FLASH_STRING(content_type_msg, "Content-Type: ");
 
-void TinyWebServer::send_error_code(Client& client, int code) {
+
+void TinyWebServer::send_error_code(Adafruit_CC3000_ClientRef client, int code) {
 #if DEBUG
-  Serial << F("TWS:Returning ");
+  Serial.print(F("TWS:Returning "));
   Serial.println(code, DEC);
 #endif
-  client << F("HTTP/1.1 ");
+  client.print(F("HTTP/1.1 "));
   client.print(code, DEC);
-  client << F(" OK\r\n");
+  client.print(F(" OK\r\n"));
   if (code != 200) {
     end_headers(client);
   }
 }
 
 void TinyWebServer::send_content_type(MimeType mime_type) {
-  client_ << content_type_msg;
+  client_.print(content_type_msg);
 
   char ch;
   int i = mime_type;
@@ -354,7 +364,7 @@ void TinyWebServer::send_content_type(MimeType mime_type) {
 }
 
 void TinyWebServer::send_content_type(const char* content_type) {
-  client_ << content_type_msg;
+  client_.print(content_type_msg);
   client_.println(content_type);
 }
 
@@ -448,6 +458,7 @@ char* TinyWebServer::get_file_from_path(const char* path) {
 
 TinyWebServer::MimeType TinyWebServer::get_mime_type_from_filename(
     const char* filename) {
+    
   MimeType r = text_html_content_type;
   if (!filename) {
     return r;
@@ -460,7 +471,7 @@ TinyWebServer::MimeType TinyWebServer::get_mime_type_from_filename(
 
     char ch;
     int i = 0;
-    while (i < mime_types.length()) {
+    while (i < strlen_P(mime_types)) {
       // Compare the extension.
       char* p = ext;
       ch = mime_types[i];
@@ -485,14 +496,23 @@ TinyWebServer::MimeType TinyWebServer::get_mime_type_from_filename(
   return r;
 }
 
-void TinyWebServer::send_file(SdFile& file) {
+void TinyWebServer::send_file(const char * filename) {
   size_t size;
-  while ((size = file.read(buffer, sizeof(buffer))) > 0) {
-    if (!client_.connected()) {
-      break;
-    }
-    write((uint8_t*)buffer, size);
+  SdFile myFile;
+  
+  // assumes the file can be opened  
+  if (!myFile.open(filename, O_READ)) {
+    sd.errorHalt("opening test.txt for read failed");
+    return;
+  }  
+  
+  int data;
+  while ((data = myFile.read()) >= 0){
+    write(data);
   }
+  
+
+  myFile.close();  
 }
 
 size_t TinyWebServer::write(uint8_t c) {
@@ -500,14 +520,22 @@ size_t TinyWebServer::write(uint8_t c) {
 }
 
 size_t TinyWebServer::write(const char *str) {
-  client_.write(str);
+  uint8_t ii;  
+  size_t len = strlen(str);
+  for(ii = 0; ii < len; ii++){
+    client_.write(str[ii]);
+  }
 }
 
 size_t TinyWebServer::write(const uint8_t *buffer, size_t size) {
-  client_.write(buffer, size);
+  //client_.write(buffer, size);
+  unsigned int ii = 0;
+  for(ii = 0; ii < size; ii++){
+    client_.write(buffer[ii]);
+  }
 }
 
-boolean TinyWebServer::read_next_char(Client& client, uint8_t* ch) {
+boolean TinyWebServer::read_next_char(Adafruit_CC3000_ClientRef client, uint8_t* ch) {
   if (!client.available()) {
     return false;
   } else {
@@ -588,7 +616,7 @@ HandlerFn put_handler_fn = NULL;
 
 // Fills in `buffer' by reading up to `num_bytes'.
 // Returns the number of characters read.
-int read_chars(TinyWebServer& web_server, Client& client,
+int read_chars(TinyWebServer& web_server, Adafruit_CC3000_ClientRef client,
                uint8_t* buffer, int size) {
   uint8_t ch;
   int pos;
@@ -599,6 +627,11 @@ int read_chars(TinyWebServer& web_server, Client& client,
 }
 
 boolean put_handler(TinyWebServer& web_server) {
+
+#if DEBUG
+  Serial.print(F("TWS:In put_handler: "));
+#endif
+
   web_server.send_error_code(200);
   web_server.end_headers();
 
@@ -607,7 +640,7 @@ boolean put_handler(TinyWebServer& web_server) {
   uint32_t start_time = 0;
   boolean watchdog_start = false;
 
-  EthernetClient client = web_server.get_client();
+  Adafruit_CC3000_ClientRef client = web_server.get_client();
 
   if (put_handler_fn) {
     (*put_handler_fn)(web_server, START, NULL, length);
@@ -622,7 +655,7 @@ boolean put_handler(TinyWebServer& web_server) {
           // Exit if there has been zero data from connected client
           // for more than 30 seconds.
 #if DEBUG
-          Serial << F("TWS:There has been no data for >30 Sec.\n");
+          Serial.print(F("TWS:There has been no data for >30 Sec.\n"));
 #endif
           break;
         }
